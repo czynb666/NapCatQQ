@@ -673,7 +673,12 @@ export async function NCoreInitShell () {
 
   await initializeEngine(engine, basicInfoWrapper, dataPathGlobal, systemPlatform, systemVersion);
   await initializeLoginService(loginService, basicInfoWrapper, dataPathGlobal, systemVersion, hostname);
-  handleProxy(session, logger);
+  // NAPCAT_PROXY_AFTER_LOGIN=1：登录阶段（拉二维码/扫码/快登）保持直连，避免脆弱的
+  // socks5 家宽代理在高并发登录时卡死导致二维码出不来；登录成功后再切代理跑稳态长连接。
+  const proxyAfterLogin = !!process.env['NAPCAT_PROXY_AFTER_LOGIN'];
+  if (!proxyAfterLogin) {
+    handleProxy(session, logger);
+  }
 
   let quickLoginUin: string | undefined;
   try {
@@ -692,6 +697,13 @@ export async function NCoreInitShell () {
   o3Service.reportAmgomWeather('login', 'a1', [dataTimestape, '0', '0']);
 
   const selfInfo = await handleLogin(loginService, logger, pathWrapper, quickLoginUin, historyLoginList);
+
+  // 延迟挂代理模式：登录已成功，此刻再把 socks5 代理设给 MSF 长连接，
+  // 之后的收发消息走家宽出口，而登录阶段的高并发直连不受影响。
+  if (proxyAfterLogin && process.env['NAPCAT_PROXY_PORT']) {
+    handleProxy(session, logger);
+    logger.logWarn('[NapCat] 登录后已切换代理出口', process.env['NAPCAT_PROXY_ADDRESS'], process.env['NAPCAT_PROXY_PORT']);
+  }
 
   // 登录成功后通知 Master 进程（用于切换崩溃重试策略）
   if (typeof process.send === 'function') {
